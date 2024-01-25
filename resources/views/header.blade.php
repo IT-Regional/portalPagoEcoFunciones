@@ -22,7 +22,7 @@
                           <img src="{{ asset('images/perfil.png')}}" alt="">
                         </div>
                         <div>
-                          <h6 class="fw-500">Nombre de usuario</h6>
+                          <h6 class="fw-500">{{session('customer_info')[0]-> name}}</h6>
                         </div>
                       </div>
                     </div>

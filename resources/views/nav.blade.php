@@ -2,7 +2,7 @@
 
 <aside class="sidebar-nav-wrapper">
       <div class="navbar-logo">
-        <a href="{{-- route('inicio')--}}">
+        <a href="{{route('home')}}">
           <img src="{{ asset('images/imgMenu.png')}}" alt="log click" style="width: 200px "; height="100px;">
         </a>
       </div>
