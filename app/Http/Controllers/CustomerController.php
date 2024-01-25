@@ -9,7 +9,8 @@ use Session;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Redirect;
 use RealRashid\SweetAlert\Facades\Alert;
-
+use Illuminate\Support\Str;
+use phpseclib\Crypt\RSA;
 
 class CustomerController extends Controller
 {
@@ -46,7 +47,7 @@ class CustomerController extends Controller
             $response = Http::withOptions([
                     'debug' => false,
                     'verify' => false
-                ])->get('https://beesys.beenet.com.sv/api/2.0/admin/auth/tokens/'.session('refresh_token'), [
+                ])->get('https://eco-networks.splynx.app/api/2.0/admin/auth/tokens/'.session('refresh_token'), [
                         
                 ]);
 
@@ -75,7 +76,7 @@ class CustomerController extends Controller
             'verify' => false
         ])->withHeaders([
             'Authorization' => 'Splynx-EA (access_token=' . session('customer_token') . ')'
-        ])->get('https://beesys.beenet.com.sv/api/2.0/admin/finance/invoices', [
+        ])->get('https://eco-networks.splynx.app/api/2.0/admin/finance/invoices', [
 
         ]);
 
@@ -98,7 +99,7 @@ class CustomerController extends Controller
         ])->withHeaders([
             
             'Authorization' => 'Splynx-EA (access_token=' . session('customer_token') . ')'
-        ])->get('https://beesys.beenet.com.sv/api/2.0/admin/config/download/invoices--' . $invoiceID, [
+        ])->get('https://eco-networks.splynx.app/api/2.0/admin/config/download/invoices--' . $invoiceID, [
 
         ]);
 
@@ -143,8 +144,125 @@ class CustomerController extends Controller
     /*Funcion para realizar pago en Banco y CRM */
     public function pay(Request $request)
     {
-        $incoming = $request->all();
-        dd($incoming);
+       $incoming = $request->all();
+       
+        /*Conexion al banco*/
+       $publicKey = <<<EOT
+        -----BEGIN PUBLIC KEY-----
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7ZEF6eApdXvClbwhc+mV
+        KtBWDUFbykd3agzWIx3bREgGO2kU2iSmgn2j3yrKuCGDI+J9xjeKIgWwv0GQWhX4
+        CPCprk29acqI1CKSiEZ6E55OA9Md/3MFwphonu616va7kcTyUQF6NHQElF3kl23I
+        i5i8OC3CqEM2hfs6fubk9nq9CMbKhrEThCtUstGrhV/5uOIVLizCmRPZiKCvMb3b
+        57mfOS4BwzPt7BfnM8X3COhvzMs24PzmtDzuxIHtjtkGpmxfNSK0fDWqoz1VivL1
+        a2zfmjtAm4JMX4zehftiNP8VaZmVdvqITpUQwtZGvzwx2b0K3Q469JCkFrPmTvZn
+        vwIDAQAB
+        -----END PUBLIC KEY-----
+        EOT;
+        
+        
+        $key = new RSA();
+        $key->loadKey($publicKey);
+
+        
+       list($month, $year) = explode('/', $incoming['expiration']);
+       $creditcardNumber = str_replace("-", "", $incoming['creditcard']);
+    
+         // payload array 
+		$payload = array(
+   		 'Card' => $creditcardNumber,
+                 'InfoS' => $incoming['cvv'],
+			     'InfoV' => $year . $month,
+                 'Amount' => str_pad( str_replace('.', '', $incoming['amount']), 12, '0', STR_PAD_LEFT)
+        );
+
+
+
+      // encrypted payload
+		$encrypted = $key->encrypt(json_encode($payload));
+		$encrypted = base64_encode($encrypted);
+
+       // dd($encrypted);
+
+        $response_agricola = Http::withOptions([
+							//'debug' => true,
+							'verify' => false
+						])->post('https://www.serfinsacheckout.com/PaymentRest/Payment', [
+							"KeyInfo" => "EA245E5E-B742-4D8A-8536-09E03EBA29EE",
+							"PaymentData" => $encrypted
+		]);
+
+
+          if ($response_agricola->json('Satisfactorio')) {
+
+			try {
+				
+				$response = Http::withOptions([
+					'debug' => false,
+					'verify' => false
+				])->post('https://eco-networks.splynx.app/api/2.0/admin/auth/tokens', [
+						//se envian los valores ingresados en el formulario
+						'auth_type' => "admin",
+						'login' => 'splynx' ,
+						'password' => '5b007388'
+				]);
+
+				$adminToken = json_decode($response->getBody()->getContents());
+
+                //dd($adminToken);
+
+			} catch (ClientException $e) {
+ 				return back();
+			} 
+
+			$invoiceArray = json_decode($incoming['invoiceArray'], true);
+             //dd($invoiceArray);
+            
+            
+			foreach ($invoiceArray as $key => $value) { 
+				$invoiceId = $key;
+				$price = $value;
+				//$authorizationId = $response_agricola->json('Datos')['Autorizacion'];
+			    //$referenceId = $response_agricola->json('Datos')['Referencia'];
+				
+				try {
+					$response = Http::withOptions([
+						'debug' => false,
+						'verify' => false
+					])->withHeaders([
+						'Authorization' => 'Splynx-EA (access_token=' . $adminToken->access_token . ')'
+					])->post('https://eco-networks.splynx.app/api/2.0/admin/finance/payments', [
+							//se envian los valores ingresados en el formulario
+							"customer_id" => session('customer_info')[0]->id,
+							"invoice_id" => $invoiceId,
+							"payment_type" => 7,
+							"date" => date('Y-m-d'),
+							"amount" => $price,
+							"comment" => "Pago factura Banco Agricola, Autorizacion: " . $authorizationId . " Referencia: " . $referenceId
+					]);
+
+				 $responsePayment = json_decode($response->getBody()->getContents());
+
+				} catch (ClientException $e) {
+                    alert()->error('Transacción Denegada','Su pago se ha sido aplicado');
+
+					return back();
+				} 
+			} // fin for
+
+			alert()->success('Transacción exitosa','Su pago se ha realizado correctamente');
+			return redirect()->route('invoices');
+	    } /*else {
+			Log::error('Cliente' . session('customer_info')[0]->id . 'Codigo de error : ' . $this->mensajeError($response_agricola->json('Datos')['Codigo']));
+			alert()->error($response_agricola->json('Mensaje'), $this->mensajeError($response_agricola->json('Datos')['Codigo'])); 
+			return redirect()->route('all_Invoices');
+		}*/
+
+
+
+
+
+
+
     }
 
 
@@ -164,7 +282,7 @@ class CustomerController extends Controller
                 'verify' => false
             ])->withHeaders([
                 'Authorization' => 'Splynx-EA (access_token=' . session('customer_token') . ')'
-            ])->get("https://beesys.beenet.com.sv/api/2.0/admin/customers/customer-billing/$customerId", [
+            ])->get("https://eco-networks.splynx.app/api/2.0/admin/customers/customer-billing/$customerId", [
 
             ]);
 
@@ -177,7 +295,7 @@ class CustomerController extends Controller
                 'verify' => false
             ])->withHeaders([
                 'Authorization' => 'Splynx-EA (access_token=' . session('customer_token') . ')'
-            ])->get("https://beesys.beenet.com.sv/api/2.0/admin/customers/customer/$customerId/internet-services", [
+            ])->get("https://eco-networks.splynx.app/api/2.0/admin/customers/customer/$customerId/internet-services", [
 
             ]);
 

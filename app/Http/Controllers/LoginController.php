@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Http;
 use Session;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Redirect;
+use RealRashid\SweetAlert\Facades\Alert;
 
 class LoginController extends Controller
 {
@@ -22,20 +23,21 @@ class LoginController extends Controller
             $response = Http::withOptions([
                 'debug' => false,
                 'verify' => false
-            ])->post('https://beesys.beenet.com.sv/api/2.0/admin/auth/tokens', [
+            ])->post('https://eco-networks.splynx.app/api/2.0/admin/auth/tokens', [
                     'auth_type' => "customer",
                     'login' => $incoming['username'] ,
                     'password' => $incoming['password']
             ]);
 
-           /* if($response->failed()){  
-                /*toast('Credenciales invalidas ','warning');   */
-              /*  return back();   
-            }*/
+            if($response->failed()){  
+                alert('Credenciales invalidas ','Intentelo nuevamente');   
+                
+               return back();   
+            }
 
             $responseToken = json_decode($response->getBody()->getContents());
 
-           // dd($responseToken);
+           //dd($responseToken);
 
             /*
              *check if the token is still valid
@@ -49,7 +51,7 @@ class LoginController extends Controller
                $response = Http::withOptions([
                     'debug' => false,
                     'verify' => false
-                ])->get('https://beesys.beenet.com.sv/api/2.0/admin/auth/tokens/' . $responseToken->refresh_token, [
+                ])->get('https://eco-networks.splynx.app/api/2.0/admin/auth/tokens/' . $responseToken->refresh_token, [
                     
                 ]);
 
@@ -67,18 +69,20 @@ class LoginController extends Controller
                 'verify' => false
             ])->withHeaders([
                 'Authorization' => 'Splynx-EA (access_token=' . $responseToken->access_token . ')'
-            ])->get('https://beesys.beenet.com.sv/api/2.0/admin/customers/customer', [
+            ])->get('https://eco-networks.splynx.app/api/2.0/admin/customers/customer', [
 
             ]);
 
             $responseCustomer = json_decode($response->getBody()->getContents());
 
+          // dd($responseCustomer);
+
             //Validate partner id and redirect correct url
-            if($responseCustomer[0]->partner_id == 1){  
+           // if($responseCustomer[0]->partner_id == 1){  
                 /*ALERTA*/   
-                $url = 'https://payment.beenet.com.sv';
-                return Redirect::away($url);
-            }
+                //$url = 'https://payment.beenet.com.sv';
+                //return Redirect::away($url);
+            //}
 
             // sessions are created
             session(['customer_info' => $responseCustomer]);
@@ -87,7 +91,8 @@ class LoginController extends Controller
             session(['refresh_token' => $responseToken->refresh_token]);
 
             //Redirect the welcome page
-            return redirect()->route('home');  
+            alert()->success('Bienvenido a  Portal de pago ECO Networks'); 
+            return redirect()->route('home'); 
 
         } catch (ClientException $e) {
             return back();
